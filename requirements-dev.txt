@@ -1,0 +1,11 @@
+pytest
+pytest-cov
+black
+flake8
+mypy
+pylint
+tox
+docx2txt
+PyPDF2>=3.0.0
+pandas
+openpyxl
