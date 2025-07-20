@@ -47,17 +47,60 @@
 
 ```
 biaoshuchecklist/
-├── install.py          # 安装脚本
-├── doc_analyzer_gui.py # 主程序
-├── icon_data.py       # 程序图标数据
-├── README.md          # 项目说明文档
-├── data/              # 数据目录
-└── logs/              # 日志目录
+├── src/                    # 源代码目录
+│   ├── doc_analyzer.py     # 核心分析模块
+│   ├── doc_analyzer_gui.py # 图形界面程序
+│   └── icon_data.py       # 程序图标数据
+├── tests/                  # 测试目录
+│   ├── test_doc_analyzer.py # 核心模块测试
+│   └── test_files/        # 测试用文件
+├── docs/                   # 文档目录
+├── data/                   # 数据目录
+├── logs/                   # 日志目录
+├── install.py             # 安装脚本
+├── setup.py              # 项目配置文件
+├── requirements.txt      # 项目依赖
+├── requirements-dev.txt  # 开发依赖
+├── tox.ini              # 测试配置
+└── README.md            # 项目说明文档
+```
+
+## 开发说明
+
+### 开发环境设置
+
+1. 克隆仓库：
+   ```bash
+   git clone https://github.com/cofecatrj/biaoshuchecklist.git
+   cd biaoshuchecklist
+   ```
+
+2. 创建虚拟环境：
+   ```bash
+   python -m venv .venv
+   .venv\Scripts\activate
+   ```
+
+3. 安装开发依赖：
+   ```bash
+   pip install -r requirements-dev.txt
+   ```
+
+### 运行测试
+
+```bash
+pytest
+```
+
+或使用tox运行完整测试套件：
+
+```bash
+tox
 ```
 
 ## 作者
 
-cofecatrj
+cofecatrj (renjun.eric@gmail.com)
 
 ## 更新日志
 
