@@ -2,28 +2,31 @@
 # -*- coding: utf-8 -*-
 
 """
-招标文件分析器 (Tender Document Analyzer)
+TDchecklist | 项目文档智能分析与管理工具
 
-这是一个用于分析招标文件中关键词的工具，支持PDF和DOCX格式文件。
+简介：
+    TDchecklist 是一款面向项目文档（如招标文件、技术协议等）智能分析的开源工具，支持 PDF/DOCX 格式，关键词批量管理，统计分析，结果导出，数据库管理等功能。
 
-功能特点:
-    - 支持PDF和DOCX格式文件的分析
-    - 关键词批量导入（支持TXT文件，使用逗号或换行符分隔）
-    - 结果导出为Excel格式
-    - 完整的日志记录系统
-    - 支持GUI和命令行两种操作模式
+主要功能：
+    - 支持 PDF、DOCX 格式文档的关键词批量分析
+    - 关键词批量导入、导出、分类管理
+    - 分析结果可导出为 Excel
+    - 项目级统计与可视化
+    - 完整日志记录，支持命令行与 GUI 双模式
+    - 数据库管理与多项目历史分析
 
-使用方法:
-    GUI模式:
+使用方法：
+    GUI模式：
         python doc_analyzer_gui.py
         或
         python doc_analyzer_gui.py --gui
 
-    命令行模式:
-        python doc_analyzer_gui.py -k 关键词文件.txt -d 招标文件.pdf -o 输出结果.xlsx
+    命令行模式：
+        python doc_analyzer_gui.py -k 关键词文件.txt -d 项目文档.pdf -o 输出结果.xlsx
 
-版本: 1.0.0
+项目主页：https://github.com/cofecatrj/TDchecklist
 作者: cofecatrj
+版本: 1.0.0
 日期: 2025-07-20
 许可: MIT License
 """
@@ -33,7 +36,8 @@ from tkinter import ttk, filedialog, messagebox
 import json
 import os
 import pandas as pd
-from doc_analyzer import DocumentAnalyzer
+from src.doc_analyzer import DocumentAnalyzer
+from src.gui_components import DatabaseManagerFrame
 import sys
 import logging
 from datetime import datetime
@@ -68,13 +72,13 @@ def setup_logger():
 # 创建logger实例
 logger = setup_logger()
 
-class TenderAnalyzerGUI:
+class TDchecklistGUI:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title(f'招标文件分析器 v{__version__}')
+        self.root.title(f'TDchecklist v{__version__}')
         self.root.geometry('1200x800')
         
-        logger.info(f"启动招标文件分析器 v{__version__}")
+        logger.info(f"启动TDchecklist v{__version__}")
         
         try:
             self.analyzer = DocumentAnalyzer()
@@ -102,7 +106,7 @@ class TenderAnalyzerGUI:
         
         version_label = ttk.Label(
             version_frame,
-            text=f"版本: {__version__} | 作者: {__author__} | 日期: {__date__}",
+            text=f"TDchecklist | 版本: {__version__} | 作者: {__author__} | 日期: {__date__}",
             anchor=tk.E
         )
         version_label.pack(side=tk.RIGHT)
@@ -112,13 +116,27 @@ class TenderAnalyzerGUI:
         logger.debug("开始设置GUI界面")
         
         # 创建主布局
-        main_frame = ttk.Frame(self.root, padding="5")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.main_frame = ttk.Frame(self.root, padding="5")
+        self.main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
+        
+        # 添加数据库管理按钮
+        db_button = ttk.Button(self.main_frame, text="打开数据库管理", command=self.open_db_manager)
+        db_button.grid(row=3, column=0, columnspan=2, sticky=(tk.E), padx=5, pady=5)
+        
+    def open_db_manager(self):
+        """打开数据库管理窗口"""
+        db_window = tk.Toplevel(self.root)
+        db_window.title("TDchecklist 数据库管理")
+        db_window.geometry("800x600")
+        
+        # 创建数据库管理界面
+        db_manager = DatabaseManagerFrame(db_window, self.analyzer.db)
+        db_manager.pack(fill=tk.BOTH, expand=True)
 
         # 左侧面板 - 关键词管理
-        left_frame = ttk.LabelFrame(main_frame, text="关键词管理", padding="5")
+        left_frame = ttk.LabelFrame(self.main_frame, text="关键词管理", padding="5")
         left_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5)
         left_frame.columnconfigure(0, weight=1)
         left_frame.rowconfigure(1, weight=1)
@@ -160,9 +178,9 @@ class TenderAnalyzerGUI:
         import_btn.pack(side=tk.LEFT, padx=5)
 
         # 右侧面板 - 文档处理
-        right_frame = ttk.LabelFrame(main_frame, text="招标文件处理", padding="5")
+        right_frame = ttk.LabelFrame(self.main_frame, text="招标文件处理", padding="5")
         right_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5)
-        main_frame.columnconfigure(1, weight=3)
+        self.main_frame.columnconfigure(1, weight=3)
         right_frame.columnconfigure(0, weight=1)
         right_frame.rowconfigure(1, weight=1)
 
@@ -356,6 +374,29 @@ class TenderAnalyzerGUI:
                     result['text']
                 ))
             
+            # 统计关键词出现次数
+            keyword_stats = {}
+            for result in results:
+                keyword = result["keyword"]
+                if keyword not in keyword_stats:
+                    keyword_stats[keyword] = 0
+                keyword_stats[keyword] += 1
+            
+            # 保存分析结果到数据库
+            file_stats = os.stat(file_path)
+            project_name = os.path.basename(file_path)
+            file_type = os.path.splitext(file_path)[1].lstrip('.')
+            
+            self.analyzer.db.add_project_summary(
+                project_name=project_name,
+                file_path=file_path,
+                keyword_stats=keyword_stats,
+                file_type=file_type,
+                file_size=file_stats.st_size,
+                status="completed",
+                notes=f"找到 {len(results)} 个匹配结果"
+            )
+            
             logger.info(f"分析完成，找到 {len(results)} 个匹配结果")
             self.update_status(f"分析完成，找到 {len(results)} 个匹配结果")
             
@@ -427,7 +468,7 @@ def process_command_line(doc_file=None, keywords_file=None, output_file=None):
         # 如果提供了关键词文件，导入关键词
         if keywords_file:
             logger.info(f"从文件导入关键词: {keywords_file}")
-            keywords = TenderAnalyzerGUI.process_keywords_file(keywords_file)
+            keywords = TDchecklistGUI.process_keywords_file(keywords_file)
             if keywords:
                 analyzer.add_keywords(keywords)
                 logger.info(f"成功导入 {len(keywords)} 个关键词")
@@ -483,7 +524,7 @@ def main():
         # 如果指定了GUI模式或没有提供任何参数，启动GUI
         if args.gui or (not args.doc and not args.keywords and not args.output):
             logger.info("创建应用实例")
-            app = TenderAnalyzerGUI()
+            app = TDchecklistGUI()
             app.run()
         else:
             # 命令行模式

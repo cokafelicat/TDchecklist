@@ -23,9 +23,8 @@ setup(
     ],
     python_requires=">=3.8",
     install_requires=[
-        "tkinter",
         "pandas",
-        "docx2txt",
+        "python-docx",
         "PyPDF2",
         "openpyxl",
     ],

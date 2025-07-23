@@ -241,3 +241,48 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+import os
+import subprocess
+import sys
+
+# 一键安装脚本 for TDchecklist (Python 版本)
+def main():
+    print("[TDchecklist] 一键安装与启动开始...")
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    venv_dir = os.path.join(base_dir, 'venv')
+    req_file = os.path.join(base_dir, 'requirements.txt')
+    
+    # 创建虚拟环境
+    if not os.path.exists(venv_dir):
+        print("[1/4] 创建虚拟环境...")
+        subprocess.check_call([sys.executable, '-m', 'venv', 'venv'])
+    else:
+        print("[1/4] 虚拟环境已存在，跳过创建")
+    
+    # 激活虚拟环境
+    if os.name == 'nt':
+        activate = os.path.join(venv_dir, 'Scripts', 'activate_this.py')
+        exec(open(activate, 'r').read(), {'__file__': activate})
+    else:
+        activate = os.path.join(venv_dir, 'bin', 'activate_this.py')
+        exec(open(activate, 'r').read(), {'__file__': activate})
+    print("[2/4] 虚拟环境已激活")
+    
+    # 升级pip
+    print("[3/4] 升级pip...")
+    subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--upgrade', 'pip'])
+    
+    # 安装依赖
+    if os.path.exists(req_file):
+        print("[4/4] 安装依赖...")
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-r', req_file])
+    else:
+        print("未找到 requirements.txt，跳过依赖安装")
+    
+    # 启动主程序
+    print("[OK] 启动 TDchecklist 主程序...")
+    subprocess.call([sys.executable, 'doc_analyzer_gui.py', '--gui'])
+
+if __name__ == '__main__':
+    main()

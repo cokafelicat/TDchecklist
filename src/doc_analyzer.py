@@ -1,49 +1,48 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import argparse
-import json
 import os
-from typing import List, Dict, Set
+from typing import List, Dict, Set, Optional
 import PyPDF2
 from docx import Document
+import logging
+from pathlib import Path
+from src.database import DatabaseManager
 
 class DocumentAnalyzer:
-    def __init__(self, keywords_file: str = 'keywords.json'):
-        # 初始化关键词文件路径
-        self.keywords_file = keywords_file
-        # 加载关键词
-        self.keywords = self._load_keywords()
-
+    def __init__(self):
+        """初始化文档分析器"""
+        self.logger = logging.getLogger(__name__)
+        self.db = DatabaseManager()
+        self._refresh_keywords()
+    
+    def _refresh_keywords(self):
+        """刷新关键词列表"""
+        self.keywords = {kw["keyword"] for kw in self.db.get_all_keywords()}
+    
     def clean_keyword(self, keyword: str) -> str:
         """清理关键词，去除引号和多余的空格"""
         return keyword.strip().strip('"').strip("'").strip()
 
     def add_keywords(self, keywords: List[str]) -> None:
-        """添加关键词到集合中"""
-        cleaned_keywords = {self.clean_keyword(k) for k in keywords}
-        self.keywords.update(cleaned_keywords)
-        self.save_keywords(list(self.keywords))
+        """添加关键词到数据库中"""
+        for keyword in keywords:
+            cleaned_keyword = self.clean_keyword(keyword)
+            if cleaned_keyword:
+                self.db.add_keyword(cleaned_keyword)
+        self._refresh_keywords()
 
     def remove_keywords(self, keywords: List[str]) -> None:
-        """从集合中删除关键词"""
-        cleaned_keywords = {self.clean_keyword(k) for k in keywords}
-        self.keywords.difference_update(cleaned_keywords)
-        self.save_keywords(list(self.keywords))
+        """从数据库中删除关键词"""
+        for keyword in keywords:
+            cleaned_keyword = self.clean_keyword(keyword)
+            if cleaned_keyword:
+                self.db.delete_keyword(cleaned_keyword)
+        self._refresh_keywords()
 
-    def _load_keywords(self) -> Set[str]:
-        """从JSON文件加载关键词"""
-        if os.path.exists(self.keywords_file):
-            with open(self.keywords_file, 'r', encoding='utf-8') as f:
-                keywords = json.load(f)
-                return {self.clean_keyword(k) for k in keywords}
-        return set()
-
-    def save_keywords(self, keywords: List[str]) -> None:
-        """保存关键词到JSON文件"""
-        cleaned_keywords = [self.clean_keyword(k) for k in keywords]
-        with open(self.keywords_file, 'w', encoding='utf-8') as f:
-            json.dump(cleaned_keywords, f, ensure_ascii=False, indent=2)
+    def get_keywords(self) -> Set[str]:
+        """获取所有关键词"""
+        return self.keywords
 
     def extract_text_from_pdf(self, pdf_path: str) -> List[Dict[str, any]]:
         """从PDF文件中提取文本
