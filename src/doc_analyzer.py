@@ -8,10 +8,13 @@ from docx import Document
 import logging
 from pathlib import Path
 from src.database import DatabaseManager
+import argparse
 
 class DocumentAnalyzer:
-    def __init__(self):
-        """初始化文档分析器"""
+    def __init__(self, keywords_file: Optional[str] = None):
+        """初始化文档分析器
+        keywords_file: 关键词配置文件路径（可选，暂未实现文件加载，仅为兼容参数）
+        """
         self.logger = logging.getLogger(__name__)
         self.db = DatabaseManager()
         self._refresh_keywords()
@@ -145,44 +148,57 @@ class DocumentAnalyzer:
         return ""
 
     def find_relevant_paragraphs(self, pages_content: List[Dict[str, any]]) -> List[Dict[str, any]]:
-        """查找包含关键词的相关段落
-        Args:
-            pages_content: 包含页码和文本内容的字典列表
-        Returns:
-            包含匹配结果的字典列表
-        """
+        """查找包含关键词的相关句子（前后两个句号之间），并高亮该句子。优化为真正提取前后两个句号之间的内容。"""
+        import re
         results = []
         current_section = ""
-        
+        # 支持中英文句号
+        sentence_end = r'[。！？.!?]'
         for page_data in pages_content:
             page_num = page_data['page']
             content = page_data['content']
-            
-            # 将内容分割成段落
-            paragraphs = [p.strip() for p in content.split('\n') if p.strip()]
-            
-            # 遍历段落
-            for para in paragraphs:
-                # 检查是否是新的章节
-                section = self.extract_section_number(para)
-                if section:
-                    current_section = section
-                
-                # 检查是否包含任何关键词
-                for keyword in self.keywords:
-                    if keyword.lower() in para.lower():
-                        # 截断段落文本，固定长度200字
-                        truncated_text = self.truncate_text(para, max_length=200)
+            # 先查找所有关键词在全文的位置
+            lowered_content = content.lower()
+            for keyword in self.keywords:
+                keyword_lower = keyword.lower()
+                start = 0
+                while True:
+                    idx = lowered_content.find(keyword_lower, start)
+                    if idx == -1:
+                        break
+                    # 向前找最近的句号
+                    pre = content.rfind('。', 0, idx)
+                    for p in ['。', '！', '？', '.', '!', '?']:
+                        p_idx = content.rfind(p, 0, idx)
+                        if p_idx > pre:
+                            pre = p_idx
+                    # 向后找下一个句号
+                    post = len(content)
+                    for p in ['。', '！', '？', '.', '!', '?']:
+                        p_idx = content.find(p, idx + len(keyword))
+                        if p_idx != -1 and p_idx < post:
+                            post = p_idx
+                    # 取出完整句子
+                    sent = content[pre+1:post+1].strip()
+                    # 提取章节号
+                    section = self.extract_section_number(sent)
+                    if section:
+                        current_section = section
+                    # 避免重复添加同一句
+                    already = False
+                    for r in results:
+                        if r['page'] == page_num and r['text'] == sent:
+                            already = True
+                            break
+                    if not already and sent:
                         results.append({
                             'page': page_num,
                             'section': current_section,
-                            'text': truncated_text,
+                            'text': sent,
                             'keyword': keyword,
-                            'original_length': len(para)  # 记录原始长度
+                            'original_length': len(sent)
                         })
-                        # 一个段落只添加一次，即使包含多个关键词
-                        break
-        
+                    start = idx + len(keyword)
         return results
 
     def process_document(self, file_path: str) -> List[Dict[str, any]]:
@@ -201,32 +217,34 @@ class DocumentAnalyzer:
         # 返回结果
         return self.find_relevant_paragraphs(pages_content)
 
-def highlight_keywords(text: str, keywords: Set[str], color: str = '\033[93m') -> str:
-    """高亮显示文本中的关键词
+def highlight_keywords(text: str, keywords: Set[str], color: str = '\033[93m', bold: bool = True) -> str:
+    """高亮并加粗显示文本中的关键词所在句子
     Args:
-        text: 要处理的文本
+        text: 要处理的句子
         keywords: 关键词集合
         color: ANSI转义序列颜色代码，默认为黄色
+        bold: 是否加粗
     Returns:
-        处理后的文本，关键词会被高亮显示
+        处理后的文本，关键词会被高亮加粗显示
     """
     reset_color = '\033[0m'
+    bold_code = '\033[1m' if bold else ''
     result = text
-    for keyword in sorted(keywords, key=len, reverse=True):  # 按长度逆序排序，避免部分替换
+    for keyword in sorted(keywords, key=len, reverse=True):
         pattern = keyword.lower()
-        # 在不区分大小写的情况下查找关键词
         index = result.lower().find(pattern)
         while index != -1:
-            # 使用原文中对应位置的实际文本
             original_keyword = result[index:index + len(keyword)]
             result = (
                 result[:index] +
-                f"{color}{original_keyword}{reset_color}" +
+                f"{bold_code}{color}{original_keyword}{reset_color}" +
                 result[index + len(keyword):]
             )
-            # 继续查找下一个出现位置，需要跳过已插入的颜色代码
-            next_start = index + len(keyword) + len(color) + len(reset_color)
+            next_start = index + len(keyword) + len(color) + len(reset_color) + (len(bold_code) if bold else 0)
             index = result.lower().find(pattern, next_start)
+    # 整句加粗
+    if bold:
+        result = f"{bold_code}{result}{reset_color}"
     return result
 
 def print_checklist(results: List[Dict[str, any]], keywords: Set[str]):
