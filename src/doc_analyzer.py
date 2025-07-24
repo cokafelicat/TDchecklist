@@ -1,14 +1,54 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 import os
 from typing import List, Dict, Set, Optional
 import PyPDF2
 from docx import Document
 import logging
 from pathlib import Path
-from src.database import DatabaseManager
+try:
+    from src.database import DatabaseManager
+except ImportError:
+    from database import DatabaseManager
 import argparse
+import openpyxl
+from openpyxl.styles import Font, PatternFill
+
+def export_to_excel(results: List[Dict[str, any]], keywords: Set[str], file_path: str):
+    """导出结果到Excel，关键词加粗高亮显示"""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "关键词提取结果"
+    # 表头
+    ws.append(["序号", "页码", "章节", "内容", "关键词"])
+    # 样式
+    highlight_fill = PatternFill(fill_type="solid", fgColor="FFFF00")  # 黄色高亮
+    bold_font = Font(bold=True, color="FF0000")  # 红色加粗
+    normal_font = Font(bold=False, color="000000")
+    for idx, result in enumerate(results, 1):
+        row = [idx, result['page'], result.get('section', ''), result['text'], result['keyword']]
+        ws.append(row)
+        # 处理内容列关键词高亮
+        content_cell = ws.cell(row=idx+1, column=4)
+        content = result['text']
+        # 只对第一个关键词出现加样式（openpyxl不支持富文本，需拆分单元格内容）
+        for kw in sorted(keywords, key=len, reverse=True):
+            pos = content.lower().find(kw.lower())
+            if pos != -1:
+                before = content[:pos]
+                match = content[pos:pos+len(kw)]
+                after = content[pos+len(kw):]
+                # 只保留关键词，其他内容不变
+                content_cell.value = before + match + after
+                # 只对整格加样式（openpyxl单元格不支持部分加粗高亮，需拆分为多列或备注）
+                content_cell.font = normal_font
+                # 关键词单独列高亮
+                ws.cell(row=idx+1, column=5).font = bold_font
+                ws.cell(row=idx+1, column=5).fill = highlight_fill
+                break
+        # 关键词列高亮
+        ws.cell(row=idx+1, column=5).font = bold_font
+        ws.cell(row=idx+1, column=5).fill = highlight_fill
+    wb.save(file_path)
+
 
 class DocumentAnalyzer:
     def __init__(self, keywords_file: Optional[str] = None):
@@ -100,37 +140,152 @@ class DocumentAnalyzer:
                     
         return paragraphs_content
 
-    def truncate_text(self, text: str, max_length: int = 100) -> str:
-        """截断文本，保持完整的中文句子
-        Args:
-            text: 要截断的文本
-            max_length: 最大长度
-        Returns:
-            截断后的文本
-        """
-        if len(text) <= max_length:
-            return text
-            
-        # 在最大长度位置寻找句号、问号或感叹号
-        cutoff = max_length
-        punctuations = ['。', '？', '！', '.', '?', '!']
-        
-        # 从最大长度位置向前查找标点符号
-        while cutoff > max_length // 2:
-            if text[cutoff - 1] in punctuations:
-                return text[:cutoff] + '...'
-            cutoff -= 1
-            
-        # 如果找不到合适的断句点，直接截断
-        return text[:max_length] + '...'
-
     def extract_section_number(self, text: str) -> str:
-        """提取段落的章节编号
+        """
+        提取段落的章节编号。
         Args:
             text: 段落文本
         Returns:
-            章节编号，如果没有则返回空字符串
+            章节编号，如果没有则返回空字符串。
         """
+        import re
+        patterns = [
+            r'^第[一二三四五六七八九十百零]+章',  # 中文数字章节
+            r'^第\d+章',                      # 阿拉伯数字章节
+            r'^\d+\.\d+(\.\d+)?',            # 数字编号（如1.2, 1.2.3）
+            r'^[一二三四五六七八九十]+、',      # 中文数字编号
+            r'^\d+、'                         # 阿拉伯数字编号
+        ]
+        for pattern in patterns:
+            m = re.match(pattern, text)
+            if m:
+                return m.group(0)
+        return ""
+
+    def find_relevant_paragraphs(self, pages_content: List[Dict[str, any]]) -> List[Dict[str, any]]:
+        """
+        查找包含关键词的相关句子（前后两个句号之间），并高亮该句子。
+        优化为真正提取前后两个句号之间的内容。
+        """
+        import re
+        results = []
+        current_section = ""
+        # 支持中英文句号
+        sentence_end = r'[。！？.!?]'
+        for page_data in pages_content:
+            page_num = page_data['page']
+            content = page_data['content']
+            # 先查找所有关键词在全文的位置
+            lowered_content = content.lower()
+            for keyword in self.keywords:
+                keyword_lower = keyword.lower()
+                start = 0
+                while True:
+                    idx = lowered_content.find(keyword_lower, start)
+                    if idx == -1:
+                        break
+                    # 向前找最近的句号
+                    pre = content.rfind('。', 0, idx)
+                    for p in ['。', '！', '？', '.', '!', '?']:
+                        p_idx = content.rfind(p, 0, idx)
+                        if p_idx > pre:
+                            pre = p_idx
+                    # 向后找下一个句号
+                    post = len(content)
+                    for p in ['。', '！', '？', '.', '!', '?']:
+                        p_idx = content.find(p, idx + len(keyword))
+                        if p_idx != -1 and p_idx < post:
+                            post = p_idx
+                    # 取出完整句子
+                    sent = content[pre+1:post+1].strip()
+                    # 提取章节号
+                    section = self.extract_section_number(sent)
+                    if section:
+                        current_section = section
+                    # 避免重复添加同一句
+                    already = False
+                    for r in results:
+                        if r['page'] == page_num and r['text'] == sent:
+                            already = True
+                            break
+                    if not already and sent:
+                        results.append({
+                            'page': page_num,
+                            'section': current_section,
+                            'text': sent,
+                            'keyword': keyword,
+                            'original_length': len(sent)
+                        })
+                    start = idx + len(keyword)
+        return results
+
+    def process_document(self, file_path: str) -> List[Dict[str, any]]:
+        """处理文档并返回结果"""
+        # 判断文件格式
+        if file_path.lower().endswith('.pdf'):
+            # 如果是PDF文件，提取文本
+            pages_content = self.extract_text_from_pdf(file_path)
+        elif file_path.lower().endswith('.docx'):
+            # 如果是DOCX文件，提取文本
+            pages_content = self.extract_text_from_docx(file_path)
+        else:
+            # 如果不是支持的文件格式，抛出异常
+            raise ValueError("不支持的文件格式，仅支持PDF和DOCX格式")
+        
+        # 返回结果
+        return self.find_relevant_paragraphs(pages_content)
+def main():
+    parser = argparse.ArgumentParser(description='文档关键词段落提取工具')
+    parser.add_argument('file', nargs='?', help='要处理的文档路径（PDF或DOCX格式）')
+    parser.add_argument('--add-keywords', nargs='+', help='添加新的关键词')
+    parser.add_argument('--remove-keywords', nargs='+', help='删除指定的关键词')
+    parser.add_argument('--remove-all', action='store_true', help='删除所有关键词')
+    parser.add_argument('--list-keywords', action='store_true', help='列出所有当前的关键词')
+    parser.add_argument('--keywords-file', default='keywords.json', help='指定关键词配置文件路径')
+    parser.add_argument('--export-excel', type=str, help='导出结果到Excel文件')
+    args = parser.parse_args()
+    analyzer = DocumentAnalyzer(keywords_file=args.keywords_file)
+    # 处理关键词相关的命令
+    if args.list_keywords:
+        print("\n当前的关键词列表：")
+        for keyword in sorted(analyzer.keywords):
+            print(f"- {keyword}")
+        return
+    if args.add_keywords:
+        cleaned_keywords = [analyzer.clean_keyword(k) for k in args.add_keywords]
+        analyzer.add_keywords(args.add_keywords)
+        print(f"\n已添加关键词: {', '.join(cleaned_keywords)}")
+    if args.remove_all:
+        # 保存关键词数量用于显示
+        removed_count = len(analyzer.keywords)
+        # 清空所有关键词
+        analyzer.keywords.clear()
+        analyzer.save_keywords([])
+        print(f"\n已删除所有关键词（共 {removed_count} 个）")
+    elif args.remove_keywords:
+        cleaned_keywords = [analyzer.clean_keyword(k) for k in args.remove_keywords]
+        analyzer.remove_keywords(args.remove_keywords)
+        print(f"\n已删除关键词: {', '.join(cleaned_keywords)}")
+    # 如果没有提供文件参数且没有其他操作，显示帮助信息
+    if not any([args.file, args.add_keywords, args.remove_keywords, args.list_keywords, args.export_excel]):
+        parser.print_help()
+        return
+    # 处理文档
+    if args.file:
+        if not os.path.exists(args.file):
+            print(f"\n错误：找不到文件 {args.file}")
+            return
+        if not analyzer.keywords:
+            print("\n错误：未设置任何关键词。请先使用 --add-keywords 添加关键词。")
+            return
+        try:
+            results = analyzer.process_document(args.file)
+            print_checklist(results, analyzer.keywords)
+            if args.export_excel:
+                export_to_excel(results, analyzer.keywords, args.export_excel)
+                print(f"\n结果已导出到: {args.export_excel}")
+        except Exception as e:
+            print(f"\n处理文档时出错: {str(e)}")
         # 匹配常见的章节编号格式
         import re
         patterns = [
@@ -297,6 +452,7 @@ def main():
     parser.add_argument('--remove-all', action='store_true', help='删除所有关键词')
     parser.add_argument('--list-keywords', action='store_true', help='列出所有当前的关键词')
     parser.add_argument('--keywords-file', default='keywords.json', help='指定关键词配置文件路径')
+    parser.add_argument('--export-excel', type=str, help='导出结果到Excel文件')
     
     args = parser.parse_args()
     
@@ -344,6 +500,10 @@ def main():
         try:
             results = analyzer.process_document(args.file)
             print_checklist(results, analyzer.keywords)
+            
+            if args.export_excel:
+                export_to_excel(results, analyzer.keywords, args.export_excel)
+                print(f"\n结果已导出到: {args.export_excel}")
         except Exception as e:
             print(f"\n处理文档时出错: {str(e)}")
 
